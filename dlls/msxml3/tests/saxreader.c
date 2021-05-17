@@ -4367,6 +4367,853 @@ static void test_mxwriter_stream(void)
     free_bstrs();
 }
 
+static void check_domnode_methods_disabled_ex(IXMLDOMNode *locked_node, DOMNodeType node_type, IXMLDOMNode *free_node, BOOL orphan_flag)
+{
+    HRESULT hr;
+    BSTR bstr;
+    IXMLDOMDocument *stylesheet;
+    VARIANT variant;
+    DOMNodeType type;
+    IXMLDOMDocument *document;
+    IXMLDOMNode *dom_node;
+    IXMLDOMNodeList *node_list;
+    IXMLDOMNamedNodeMap *attributes;
+    VARIANT_BOOL variant_bool;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument, (void **)&stylesheet);
+    ok(hr == S_OK, "Failed to create a stylesheet, hr %#x.\n", hr);
+    hr = IXMLDOMDocument_loadXML(stylesheet, _bstr_("<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" version=\"1.0\">"
+                                                      "</xsl:stylesheet>"), &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    /* check nodeType first and make sure it is equal to the declared node_type */
+    hr = IXMLDOMNode_get_nodeType(locked_node, &type);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    ok(type == node_type, "Got %d, expected %d\n", type, node_type);
+
+    hr = IXMLDOMNode_get_nodeName(locked_node, &bstr);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_get_nodeValue(locked_node, &variant);
+    if (node_type == NODE_TEXT || node_type == NODE_COMMENT || node_type == NODE_CDATA_SECTION) {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        ok(V_VT(&variant) == VT_BSTR, "%p: Got %d, expected %d\n", locked_node, V_VT(&variant), VT_BSTR);
+        SysFreeString(V_BSTR(&variant));
+    }
+    else {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+
+    V_VT(&variant) = VT_BSTR;
+    V_BSTR(&variant) = _bstr_("some value");
+    hr = IXMLDOMNode_put_nodeValue(locked_node, variant);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_get_parentNode(locked_node, &dom_node);
+    if (node_type == NODE_DOCUMENT || node_type == NODE_DOCUMENT_FRAGMENT || node_type == NODE_CDATA_SECTION || orphan_flag) {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+    else {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMNode_Release(dom_node);
+    }
+
+    hr = IXMLDOMNode_get_childNodes(locked_node, &node_list);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    IXMLDOMNodeList_Release(node_list);
+
+    hr = IXMLDOMNode_get_firstChild(locked_node, &dom_node);
+    if (node_type == NODE_TEXT || node_type == NODE_DOCUMENT_FRAGMENT || node_type == NODE_COMMENT || node_type == NODE_CDATA_SECTION) {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+    else {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMNode_Release(dom_node);
+    }
+
+    hr = IXMLDOMNode_get_lastChild(locked_node, &dom_node);
+    if (node_type == NODE_TEXT || node_type == NODE_DOCUMENT_FRAGMENT || node_type == NODE_COMMENT || node_type == NODE_CDATA_SECTION) {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+    else {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMNode_Release(dom_node);
+    }
+
+    hr = IXMLDOMNode_get_previousSibling(locked_node, &dom_node);
+    if (node_type == NODE_ELEMENT && !orphan_flag) {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMNode_Release(dom_node);
+    }
+    else {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+
+    hr = IXMLDOMNode_get_nextSibling(locked_node, &dom_node);
+    if (node_type == NODE_ELEMENT && !orphan_flag) {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMNode_Release(dom_node);
+    }
+    else {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+
+    hr = IXMLDOMNode_get_attributes(locked_node, &attributes);
+    if (node_type == NODE_ELEMENT) {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMNamedNodeMap_Release(attributes);
+    }
+    else {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+
+    V_VT(&variant) = VT_NULL;
+    V_DISPATCH(&variant) = (IDispatch*)0xdeadbeef;
+    hr = IXMLDOMNode_insertBefore(locked_node, free_node, variant, NULL);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    /* only domdocument and element have child nodes to attempt to
+       replace or remove */
+    if (node_type == NODE_DOCUMENT || node_type == NODE_ELEMENT) {
+        hr = IXMLDOMNode_get_firstChild(locked_node, &dom_node);
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+        hr = IXMLDOMNode_replaceChild(locked_node, free_node, dom_node, NULL);
+        ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+        hr = IXMLDOMNode_removeChild(locked_node, dom_node, NULL);
+        ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+        IXMLDOMNode_Release(dom_node);
+    }
+
+    hr = IXMLDOMNode_appendChild(locked_node, free_node, NULL);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_hasChildNodes(locked_node, &variant_bool);
+    if (node_type == NODE_TEXT || node_type == NODE_DOCUMENT_FRAGMENT || node_type == NODE_COMMENT || node_type == NODE_CDATA_SECTION) {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+    else {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        ok(variant_bool == VARIANT_TRUE, "%p: Got %d, expected %d\n", locked_node, variant_bool, VARIANT_TRUE);
+    }
+
+    hr = IXMLDOMNode_get_ownerDocument(locked_node, &document);
+    if (node_type == NODE_DOCUMENT) {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+    else {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        IXMLDOMDocument_Release(document);
+    }
+
+    hr = IXMLDOMNode_cloneNode(locked_node, VARIANT_FALSE, &dom_node);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    IXMLDOMNode_Release(dom_node);
+
+    hr = IXMLDOMNode_cloneNode(locked_node, VARIANT_TRUE, &dom_node);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    IXMLDOMNode_Release(dom_node);
+
+    hr = IXMLDOMNode_get_nodeTypeString(locked_node, &bstr);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    if (node_type == NODE_DOCUMENT) {
+        ok(!lstrcmpW(bstr, L"document"), "Incorrect node type\n");
+    }
+    else if (node_type == NODE_DOCUMENT_FRAGMENT) {
+        ok(!lstrcmpW(bstr, L"documentfragment"), "Incorrect node type\n");
+    }
+    else if (node_type == NODE_ELEMENT) {
+        ok(!lstrcmpW(bstr, L"element"), "Incorrect node type\n");
+    }
+    else if (node_type == NODE_COMMENT) {
+        ok(!lstrcmpW(bstr, L"comment"), "Incorrect node type\n");
+    }
+    else if (node_type == NODE_CDATA_SECTION) {
+        ok(!lstrcmpW(bstr, L"cdatasection"), "Incorrect node type\n");
+    }
+    else {
+        ok(!lstrcmpW(bstr, L"text"), "Incorrect node type\n");
+    }
+    SysFreeString(bstr);
+
+    hr = IXMLDOMNode_get_text(locked_node, &bstr);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    SysFreeString(bstr);
+
+    bstr = SysAllocStringLen(L"4321", 4);
+    hr = IXMLDOMNode_put_text(locked_node, bstr);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    SysFreeString(bstr);
+
+    hr = IXMLDOMNode_get_specified(locked_node, &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    ok(variant_bool == VARIANT_TRUE, "%p: Got %d, expected %d\n", locked_node, variant_bool, VARIANT_TRUE);
+
+    hr = IXMLDOMNode_get_definition(locked_node, &dom_node);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_get_nodeTypedValue(locked_node, &variant);
+    if (node_type == NODE_DOCUMENT || node_type == NODE_DOCUMENT_FRAGMENT) {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+    else {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        ok(V_VT(&variant) == VT_BSTR, "%p: Got %d, expected %d\n", locked_node, V_VT(&variant), VT_BSTR);
+        SysFreeString(V_BSTR(&variant));
+    }
+
+    V_VT(&variant) = VT_BSTR;
+    V_BSTR(&variant) = SysAllocStringLen(L"1", 1);
+    hr = IXMLDOMNode_put_nodeTypedValue(locked_node, variant);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    SysFreeString(V_BSTR(&variant));
+
+    hr = IXMLDOMNode_get_dataType(locked_node, &variant);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    bstr = SysAllocStringLen(L"char", 4);
+    hr = IXMLDOMNode_put_dataType(locked_node, bstr);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    SysFreeString(bstr);
+
+    hr = IXMLDOMNode_get_xml(locked_node, &bstr);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    SysFreeString(bstr);
+
+    hr = IXMLDOMNode_transformNode(locked_node, (IXMLDOMNode*)stylesheet, &bstr);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_selectNodes(locked_node, _bstr_("."), &node_list);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_selectSingleNode(locked_node, _bstr_("."), &dom_node);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_get_parsed(locked_node, &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    if (node_type == NODE_DOCUMENT) {
+        ok(variant_bool == VARIANT_FALSE, "%p: Got %d, expected %d.\n", locked_node, variant_bool, VARIANT_FALSE);
+    }
+    else {
+        ok(variant_bool == VARIANT_TRUE, "%p: Got %d, expected %d.\n", locked_node, variant_bool, VARIANT_TRUE);
+    }
+
+    hr = IXMLDOMNode_get_namespaceURI(locked_node, &bstr);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_get_prefix(locked_node, &bstr);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+
+    hr = IXMLDOMNode_get_baseName(locked_node, &bstr);
+    if (node_type == NODE_ELEMENT) {
+        ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_node, hr);
+        ok(!lstrcmpW(bstr, L"BankAccount"), "%p: Incorrect baseName\n", locked_node);
+    }
+    else {
+        ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    }
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument, (void **)&document);
+    ok(hr == S_OK, "Failed to create a stylesheet, hr %#x.\n", hr);
+    V_VT(&variant) = VT_DISPATCH;
+    V_DISPATCH(&variant) = (IDispatch*)document;
+    hr = IXMLDOMNode_transformNodeToObject(locked_node, (IXMLDOMNode*)stylesheet, variant);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_node, hr);
+    IXMLDOMDocument_Release(document);
+
+    IXMLDOMDocument_Release(stylesheet);
+}
+
+static void check_domnode_methods_disabled(IXMLDOMNode *locked_node, DOMNodeType node_type, IXMLDOMNode *free_node)
+{
+    check_domnode_methods_disabled_ex(locked_node, node_type, free_node, 0);
+}
+
+static void check_domelement_methods_disabled(IXMLDOMElement *locked_element)
+{
+    HRESULT hr;
+    BSTR bstr;
+    BSTR some_attribute;
+    VARIANT variant;
+    IXMLDOMAttribute *attribute_node;
+    IXMLDOMNodeList *node_list;
+
+    some_attribute = _bstr_("some-attribute");
+
+    hr = IXMLDOMElement_get_tagName(locked_element, &bstr);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_element, hr);
+    ok(!lstrcmpW(bstr, L"BankAccount"), "%p: Incorrect tag name: %s.\n", locked_element, wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+
+    hr = IXMLDOMElement_getAttribute(locked_element, some_attribute, &variant);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    V_VT(&variant) = VT_BSTR;
+    V_BSTR(&variant) = _bstr_("some-value");
+    hr = IXMLDOMElement_setAttribute(locked_element, some_attribute, variant);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    hr = IXMLDOMElement_removeAttribute(locked_element, some_attribute);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    hr = IXMLDOMElement_getAttributeNode(locked_element, some_attribute, &attribute_node);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    hr = IXMLDOMElement_setAttributeNode(locked_element, NULL, NULL);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    hr = IXMLDOMElement_removeAttributeNode(locked_element, NULL, NULL);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    hr = IXMLDOMElement_getElementsByTagName(locked_element, _bstr_("some_tag_name"), &node_list);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_element, hr);
+
+    hr = IXMLDOMElement_normalize(locked_element);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_element, hr);
+}
+
+
+typedef struct
+{
+    IDispatch IDispatch_iface;
+    LONG ref;
+} dispevent;
+
+static inline dispevent *impl_from_IDispatch( IDispatch *iface )
+{
+    return CONTAINING_RECORD(iface, dispevent, IDispatch_iface);
+}
+
+static HRESULT WINAPI dispevent_QueryInterface(IDispatch *iface, REFIID riid, void **ppvObject)
+{
+    *ppvObject = NULL;
+
+    if ( IsEqualGUID( riid, &IID_IDispatch) ||
+         IsEqualGUID( riid, &IID_IUnknown) )
+    {
+        *ppvObject = iface;
+    }
+    else
+        return E_NOINTERFACE;
+
+    IDispatch_AddRef( iface );
+
+    return S_OK;
+}
+
+static ULONG WINAPI dispevent_AddRef(IDispatch *iface)
+{
+    dispevent *This = impl_from_IDispatch( iface );
+    return InterlockedIncrement( &This->ref );
+}
+
+static ULONG WINAPI dispevent_Release(IDispatch *iface)
+{
+    dispevent *This = impl_from_IDispatch( iface );
+    ULONG ref = InterlockedDecrement( &This->ref );
+
+    if (ref == 0)
+        heap_free(This);
+
+    return ref;
+}
+
+static HRESULT WINAPI dispevent_GetTypeInfoCount(IDispatch *iface, UINT *pctinfo)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI dispevent_GetTypeInfo(IDispatch *iface, UINT iTInfo,
+        LCID lcid, ITypeInfo **ppTInfo)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI dispevent_GetIDsOfNames(IDispatch *iface, REFIID riid,
+        LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI dispevent_Invoke(IDispatch *iface, DISPID member, REFIID riid,
+        LCID lcid, WORD flags, DISPPARAMS *params, VARIANT *result,
+        EXCEPINFO *excepInfo, UINT *argErr)
+{
+    return S_OK;
+}
+
+static const IDispatchVtbl dispeventVtbl =
+{
+    dispevent_QueryInterface,
+    dispevent_AddRef,
+    dispevent_Release,
+    dispevent_GetTypeInfoCount,
+    dispevent_GetTypeInfo,
+    dispevent_GetIDsOfNames,
+    dispevent_Invoke
+};
+
+static IDispatch* create_dispevent(void)
+{
+    dispevent *event = heap_alloc(sizeof(*event));
+
+    event->IDispatch_iface.lpVtbl = &dispeventVtbl;
+    event->ref = 1;
+
+    return (IDispatch*)&event->IDispatch_iface;
+}
+
+
+static void check_domdoc_methods_disabled(IXMLDOMDocument *locked_doc)
+{
+    HRESULT hr;
+    VARIANT variant;
+    VARIANT_BOOL variant_bool;
+    BSTR bstr;
+    LONG long_integer;
+    IDispatch *dispatch;
+    IXMLDOMDocumentType *document_type;
+    IXMLDOMImplementation *implementation;
+    IXMLDOMElement *element;
+    IXMLDOMDocumentFragment *document_fragment;
+    IXMLDOMText *text;
+    IXMLDOMComment *comment;
+    IXMLDOMCDATASection *cdata_section;
+    IXMLDOMProcessingInstruction *processing_instruction;
+    IXMLDOMAttribute *attribute;
+    IXMLDOMEntityReference *entity_reference;
+    IXMLDOMNodeList *node_list;
+    IXMLDOMNode *node;
+    IXMLDOMParseError *parse_error;
+
+    hr = IXMLDOMDocument_get_doctype(locked_doc, &document_type);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_get_implementation(locked_doc, &implementation);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMImplementation_Release(implementation);
+
+    hr = IXMLDOMDocument_get_documentElement(locked_doc, &element);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    /* element used by next test */
+
+    hr = IXMLDOMDocument_putref_documentElement(locked_doc, element);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMElement_Release(element);
+
+    hr = IXMLDOMDocument_createElement(locked_doc, _bstr_("SomeTagName"), &element);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_createDocumentFragment(locked_doc, &document_fragment);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMDocumentFragment_Release(document_fragment);
+
+    hr = IXMLDOMDocument_createTextNode(locked_doc, _bstr_("some text"), &text);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMText_Release(text);
+
+    hr = IXMLDOMDocument_createComment(locked_doc, _bstr_("some comment"), &comment);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMComment_Release(comment);
+
+    hr = IXMLDOMDocument_createCDATASection(locked_doc, _bstr_("some CDATA"), &cdata_section);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMCDATASection_Release(cdata_section);
+
+    hr = IXMLDOMDocument_createProcessingInstruction(locked_doc, _bstr_("xml"),
+                                                     _bstr_("version=\"1.0\" encoding=\"UTF-16\""), &processing_instruction);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_createAttribute(locked_doc, _bstr_("attribute"), &attribute);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_createEntityReference(locked_doc, _bstr_("entityref"), &entity_reference);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_getElementsByTagName(locked_doc, _bstr_("BankAccount"), &node_list);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    V_VT(&variant) = VT_I1;
+    V_I1(&variant) = NODE_TEXT;
+    hr = IXMLDOMDocument_createNode(locked_doc, variant, NULL, NULL, &node);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_nodeFromID(locked_doc, _bstr_("id"), &node);
+    ok(hr == E_PENDING, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_get_readyState(locked_doc, &long_integer);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    ok(long_integer == 3, "%p: Got %d, expected %d.", locked_doc, long_integer, 3);
+
+    hr = IXMLDOMDocument_get_parseError(locked_doc, &parse_error);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMParseError_Release(parse_error);
+
+    hr = IXMLDOMDocument_get_url(locked_doc, &bstr);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_get_async(locked_doc, &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    ok(variant_bool == VARIANT_TRUE, "Got %d, expected %d.\n", variant_bool, VARIANT_TRUE);
+
+    hr = IXMLDOMDocument_put_async(locked_doc, variant_bool);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    V_VT(&variant) = VT_BSTR;
+    V_BSTR(&variant) = _bstr_("saxreader_test.xml");
+    hr = IXMLDOMDocument_save(locked_doc, variant);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    DeleteFileA("saxreader.xml");
+
+    hr = IXMLDOMDocument_get_validateOnParse(locked_doc, &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    ok(variant_bool == VARIANT_TRUE, "%p: Got %d, expected %d.\n", locked_doc, variant_bool, VARIANT_TRUE);
+
+    hr = IXMLDOMDocument_put_validateOnParse(locked_doc, variant_bool);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_get_resolveExternals(locked_doc, &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    ok(variant_bool == VARIANT_FALSE, "%p: Got %d, expected %d.\n", locked_doc, variant_bool, VARIANT_FALSE);
+
+    hr = IXMLDOMDocument_put_resolveExternals(locked_doc, variant_bool);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument_get_preserveWhiteSpace(locked_doc, &variant_bool);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    ok(variant_bool == VARIANT_FALSE, "%p: Got %d, expected %d.\n", locked_doc, variant_bool, VARIANT_FALSE);
+
+    hr = IXMLDOMDocument_put_preserveWhiteSpace(locked_doc, variant_bool);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    dispatch = create_dispevent();
+    V_VT(&variant) = VT_DISPATCH;
+    V_DISPATCH(&variant) = dispatch;
+    hr = IXMLDOMDocument_put_onreadystatechange(locked_doc, variant);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    EXPECT_REF(dispatch, 2);
+
+    hr = IXMLDOMDocument_put_ondataavailable(locked_doc, variant);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    EXPECT_REF(dispatch, 3);
+
+    hr = IXMLDOMDocument_put_ontransformnode(locked_doc, variant);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    EXPECT_REF(dispatch, 4);
+    IDispatch_Release(dispatch);
+
+    /* The abort, load, and loadXML functions all alter the domdoc's
+       state with respect to the mxwriter. */
+}
+
+static void check_domdoc2_methods_disabled(IXMLDOMDocument2 *locked_doc)
+{
+    HRESULT hr;
+    VARIANT variant;
+    IXMLDOMSchemaCollection *schema_collection;
+    IXMLDOMParseError *parse_error;
+
+    hr = IXMLDOMDocument2_get_namespaces(locked_doc, &schema_collection);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMSchemaCollection_Release(schema_collection);
+
+    hr = IXMLDOMDocument2_get_schemas(locked_doc, &variant);
+    ok(hr == S_FALSE, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    V_VT(&variant) = VT_DISPATCH;
+    V_DISPATCH(&variant) = NULL;
+    hr = IXMLDOMDocument2_putref_schemas(locked_doc, variant);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument2_validate(locked_doc, &parse_error);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    V_VT(&variant) = VT_BOOL;
+    V_BOOL(&variant) = 0;
+    hr = IXMLDOMDocument2_setProperty(locked_doc, _bstr_("ForcedResync"), variant);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    hr = IXMLDOMDocument2_getProperty(locked_doc, _bstr_("ForcedResync"), &variant);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    ok(V_BOOL(&variant) == VARIANT_TRUE, "%p: Got %d, expected %d.\n", locked_doc, V_BOOL(&variant), VARIANT_TRUE);
+}
+
+static void check_domdoc3_methods_disabled(IXMLDOMDocument3 *locked_doc, IXMLDOMNode *locked_node)
+{
+    HRESULT hr;
+    VARIANT_BOOL variant_bool;
+    IXMLDOMParseError *parse_error;
+    IXMLDOMNode *node;
+
+    hr = IXMLDOMDocument3_validateNode(locked_doc, locked_node, &parse_error);
+    ok(hr == E_FAIL, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+
+    variant_bool = VARIANT_TRUE;
+    hr = IXMLDOMDocument3_importNode(locked_doc, locked_node, variant_bool, &node);
+    ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr);
+    IXMLDOMNode_Release(node);
+}
+
+static void test_mxwriter_domdoc_startDocument_disables_domdoc_methods(void)
+{
+    HRESULT hr;
+    IXMLDOMDocument *domdoc;
+    IXMLDOMDocument2 *domdoc2;
+    IXMLDOMDocument3 *domdoc3;
+    IMXWriter *writer;
+    ISAXContentHandler *content;
+    VARIANT dest;
+    VARIANT_BOOL deep_clone;
+    IXMLDOMNode *temp_node;
+    IXMLDOMNodeList *temp_node_list;
+    IXMLDOMNode *element_node;
+    IXMLDOMNode *text_node;
+    IXMLDOMNode *free_node;
+    IXMLDOMNode *import_text_node;
+    IXMLDOMNode *import_element_node;
+    IXMLDOMDocumentFragment *document_fragment;
+    IXMLDOMText *text;
+    IXMLDOMComment *comment;
+    IXMLDOMCDATASection *cdata_section;
+    IXMLDOMElement *element;
+
+    /* Create mxwriter and domdoc, set domdoc output, start document, add elements */
+    hr = CoCreateInstance(&CLSID_MXXMLWriter60, NULL, CLSCTX_INPROC_SERVER, &IID_IMXWriter, (void**)&writer);
+    ok(hr == S_OK, "Failed to create a writer, hr %#x.\n", hr);
+
+    hr = IMXWriter_QueryInterface(writer, &IID_ISAXContentHandler, (void**)&content);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument, (void **)&domdoc);
+    ok(hr == S_OK, "Failed to create a document, hr %#x.\n", hr);
+    hr = IXMLDOMDocument_QueryInterface(domdoc, &IID_IXMLDOMDocument2, (void**)&domdoc2);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    hr = IXMLDOMDocument_QueryInterface(domdoc, &IID_IXMLDOMDocument2, (void**)&domdoc3);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    V_VT(&dest) = VT_DISPATCH;
+    V_DISPATCH(&dest) = (IDispatch *)domdoc;
+
+    hr = IMXWriter_put_output(writer, dest);
+    ok(hr == S_OK, "Failed to set writer output, hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startDocument(content);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startElement(content, L"", 0, L"", 0, L"Accounts", 8, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startElement(content, L"", 0, L"", 0, L"BankAccount", 11, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_endElement(content, L"", 0, L"", 0, L"BankAccount", 11);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startElement(content, L"", 0, L"", 0, L"BankAccount", 11, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_characters(content, L"12345", 5);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_endElement(content, L"", 0, L"", 0, L"BankAccount", 11);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startElement(content, L"", 0, L"", 0, L"BankAccount", 11, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_endElement(content, L"", 0, L"", 0, L"BankAccount", 11);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startElement(content, L"", 0, L"", 0, L"SomeNode", 8, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_endElement(content, L"", 0, L"", 0, L"SomeNode", 8);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    /* hr = ISAXContentHandler_endElement(content, L"", 0, L"", 0, L"Accounts", 8); */
+    /* ok(hr == S_OK, "Unexpected hr %#x.\n", hr); */
+
+    /* hr = ISAXContentHandler_endDocument(content); */
+    /* ok(hr == S_OK, "Unexpected hr %#x.\n", hr); */
+
+
+    /* Access created nodes. */
+    hr = IXMLDOMDocument_get_firstChild(domdoc, &temp_node);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IXMLDOMNode_get_childNodes(temp_node, &temp_node_list);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IXMLDOMNodeList_get_item(temp_node_list, 1, &element_node);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IXMLDOMNodeList_get_item(temp_node_list, 3, &free_node);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IXMLDOMNode_get_firstChild(element_node, &text_node);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    deep_clone = VARIANT_TRUE;
+    hr = IXMLDOMDocument3_importNode(domdoc3, text_node, deep_clone, &import_text_node);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = IXMLDOMDocument3_importNode(domdoc3, element_node, deep_clone, &import_element_node);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+
+    IXMLDOMNode_Release(temp_node);
+    IXMLDOMNodeList_Release(temp_node_list);
+
+
+    /*
+       Call IXMLDOMNode methods on "all" DOM nodes that can be reached
+       or created from the document:
+
+       Document
+       Document fragment
+       Text node created from document
+       Comment created from document
+       CDATA created from document
+       
+       Element in DOM tree
+       Text node in DOM tree
+    */
+    check_domnode_methods_disabled((IXMLDOMNode*)domdoc, NODE_DOCUMENT, free_node);
+
+    hr = IXMLDOMDocument_createDocumentFragment(domdoc, &document_fragment);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    check_domnode_methods_disabled((IXMLDOMNode*)document_fragment, NODE_DOCUMENT_FRAGMENT, free_node);
+    IXMLDOMDocumentFragment_Release(document_fragment);
+
+    hr = IXMLDOMDocument_createTextNode(domdoc, _bstr_("some text"), &text);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    check_domnode_methods_disabled_ex((IXMLDOMNode*)text, NODE_TEXT, free_node, 1);
+    IXMLDOMText_Release(text);
+
+    hr = IXMLDOMDocument_createComment(domdoc, _bstr_("some comment"), &comment);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    check_domnode_methods_disabled_ex((IXMLDOMNode*)comment, NODE_COMMENT, free_node, 1);
+    IXMLDOMComment_Release(comment);
+
+    hr = IXMLDOMDocument_createCDATASection(domdoc, _bstr_("some CDATA"), &cdata_section);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    check_domnode_methods_disabled((IXMLDOMNode*)cdata_section, NODE_CDATA_SECTION, free_node);
+    IXMLDOMCDATASection_Release(cdata_section);
+
+    check_domnode_methods_disabled_ex(import_element_node, NODE_ELEMENT, free_node, 1);
+    check_domnode_methods_disabled_ex(import_text_node, NODE_TEXT, free_node, 1);
+
+    check_domnode_methods_disabled(element_node, NODE_ELEMENT, free_node);
+    check_domnode_methods_disabled(text_node, NODE_TEXT, free_node);
+
+    /* Call IXMLDOMElement methods on element */
+    hr = IXMLDOMNode_QueryInterface(element_node, &IID_IXMLDOMElement, (void**)&element);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    check_domelement_methods_disabled(element);
+    IXMLDOMElement_Release(element);
+
+    hr = IXMLDOMNode_QueryInterface(import_element_node, &IID_IXMLDOMElement, (void**)&element);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+    check_domelement_methods_disabled(element);
+    IXMLDOMElement_Release(element);
+
+    /* Call IXMLDOMDocument/2/3 methods on domdoc */
+    check_domdoc_methods_disabled(domdoc);
+
+    check_domdoc_methods_disabled((IXMLDOMDocument*)domdoc2);
+    check_domdoc2_methods_disabled(domdoc2);
+
+    check_domdoc_methods_disabled((IXMLDOMDocument*)domdoc3);
+    check_domdoc2_methods_disabled((IXMLDOMDocument2*)domdoc3);
+    check_domdoc3_methods_disabled(domdoc3, element_node);
+    check_domdoc3_methods_disabled(domdoc3, text_node);
+
+    IXMLDOMNode_Release(import_element_node);
+    IXMLDOMNode_Release(import_text_node);
+    IXMLDOMNode_Release(free_node);
+    IXMLDOMNode_Release(text_node);
+    IXMLDOMNode_Release(element_node);
+    IXMLDOMDocument3_Release(domdoc3);
+    IXMLDOMDocument2_Release(domdoc2);
+    IXMLDOMDocument_Release(domdoc);
+    ISAXContentHandler_Release(content);
+    IMXWriter_Release(writer);
+    free_bstrs();
+}
+
+
+static void write_to_file(const char *name, const char *data)
+{
+    DWORD written;
+    HANDLE hfile;
+    BOOL ret;
+
+    hfile = CreateFileA(name, GENERIC_WRITE|GENERIC_READ, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+    ok(hfile != INVALID_HANDLE_VALUE, "failed to create test file: %s\n", name);
+
+    ret = WriteFile(hfile, data, strlen(data), &written, NULL);
+    ok(ret, "WriteFile failed: %s, %d\n", name, GetLastError());
+
+    CloseHandle(hfile);
+}
+
+#define DECL_WIN_1252 \
+"<?xml version=\"1.0\" encoding=\"Windows-1252\"?>"
+
+static const char win1252xml[] =
+DECL_WIN_1252
+"<open></open>";
+
+static void test_mxwriter_domdoc_break_lock(void)
+{
+    HRESULT hr;
+    IXMLDOMDocument *domdoc;
+    IMXWriter *writer;
+    ISAXContentHandler *content;
+    VARIANT dest;
+
+    hr = CoCreateInstance(&CLSID_MXXMLWriter60, NULL, CLSCTX_INPROC_SERVER, &IID_IMXWriter, (void**)&writer);
+    ok(hr == S_OK, "Failed to create a writer, hr %#x.\n", hr);
+
+    hr = IMXWriter_QueryInterface(writer, &IID_ISAXContentHandler, (void**)&content);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument, (void **)&domdoc);
+    ok(hr == S_OK, "Failed to create a document, hr %#x.\n", hr);
+
+    V_VT(&dest) = VT_DISPATCH;
+    V_DISPATCH(&dest) = (IDispatch *)domdoc;
+
+    hr = IMXWriter_put_output(writer, dest);
+    ok(hr == S_OK, "Failed to set writer output, hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startDocument(content);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    hr = ISAXContentHandler_startElement(content, L"", 0, L"", 0, L"Accounts", 8, NULL);
+    ok(hr == S_OK, "Unexpected hr %#x.\n", hr);
+
+    /* hr = IXMLDOMDocument_abort(locked_doc); */
+    /* ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr); */
+
+
+    /* GetTempPathA(MAX_PATH, path); */
+    /* strcat(path, "winetest.xml"); */
+    /* write_to_file(path, win1252xml); */
+    /* V_VT(&variant) = VT_BSTR; */
+    /* V_BSTR(&variant) = _bstr_(path); */
+    /* hr = IXMLDOMDocument_load(locked_doc, variant, &variant_bool); */
+    /* ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr); */
+
+    /* hr = IXMLDOMDocument_get_documentElement(locked_doc, &element); */
+    /* ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr); */
+    /* hr = IXMLDOMElement_get_nodeName(element, &bstr); */
+    /* ok(hr == S_OK, "%p: Unexpected hr %#x.\n", locked_doc, hr); */
+    /* ok(!lstrcmpW(bstr, L"open"), "Incorrect node name: %s\n", wine_dbgstr_w(bstr)); */
+}
+
 static void test_mxwriter_domdoc(void)
 {
     ISAXContentHandler *content;
@@ -5961,6 +6808,8 @@ START_TEST(saxreader)
         test_mxwriter_properties();
         test_mxwriter_flush();
         test_mxwriter_stream();
+        test_mxwriter_domdoc_startDocument_disables_domdoc_methods();
+        test_mxwriter_domdoc_break_lock();
         test_mxwriter_domdoc();
         test_mxwriter_encoding();
         test_mxwriter_dispex();
